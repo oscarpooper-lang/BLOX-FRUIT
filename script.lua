@@ -1333,12 +1333,16 @@ Button(misc, "Rejoin", function() TeleportService:Teleport(game.PlaceId, Player)
 Button(misc, "Copy Game Link", function() pcall(setclipboard, "https://www.roblox.com/games/" .. game.PlaceId); Notify("OK", "Copied") end)
 Button(misc, "Destroy GUI", function() Config._running = false; SG:Destroy() end)
 
--- select first tab
-for n in pairs(Tabs) do
-    -- switch to Farm
-end
 -- manually trigger Farm tab
-TabBtns["Farm"].MouseButton1Click:Fire()
+for n, p in pairs(Tabs) do
+    p.Visible = (n == "Farm")
+    if TabBtns[n] then
+        TweenService:Create(TabBtns[n], TweenInfo.new(0.15), {
+            BackgroundColor3 = n == "Farm" and Theme.Accent or Theme.BG,
+            TextColor3 = n == "Farm" and Theme.Text or Theme.Dim,
+        }):Play()
+    end
+end
 
 -- ══════════════════════════════════════════════════════════
 -- MAIN LOOPS — throttled, cached, no GetDescendants()
