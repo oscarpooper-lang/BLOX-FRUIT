@@ -1,28 +1,34 @@
---[[
-    PHANTOM ENGINE v4.2 — Blox Fruits Ultimate
-    Optimized build — cached scanning, throttled loops
-]]
+-- PHANTOM ENGINE v4.2
 
--- ══════════════════════════════════════════════════════════
--- ANTI-DOUBLE-LOAD (with reset support)
--- ══════════════════════════════════════════════════════════
+-- step-by-step debug
+print("[Phantom] Script received, starting init...")
+
+-- anti-double-load
 pcall(function()
-    if getgenv and getgenv().PhantomLoaded then
-        -- kill old instance first
-        getgenv().PhantomLoaded = false
-        pcall(function()
-            game:GetService("CoreGui"):FindFirstChild("PhantomEngine"):Destroy()
-        end)
-        task.wait(0.5)
+    if type(getgenv) == "function" then
+        if getgenv().PhantomLoaded then
+            pcall(function()
+                local cg = game:FindFirstChild("CoreGui") or game:GetService("CoreGui")
+                if cg then
+                    local old = cg:FindFirstChild("PhantomEngine")
+                    if old then old:Destroy() end
+                end
+                -- also check PlayerGui
+                local pg = game:GetService("Players").LocalPlayer:FindFirstChild("PlayerGui")
+                if pg then
+                    local old2 = pg:FindFirstChild("PhantomEngine")
+                    if old2 then old2:Destroy() end
+                end
+            end)
+            task.wait(0.3)
+        end
+        getgenv().PhantomLoaded = true
     end
-    if getgenv then getgenv().PhantomLoaded = true end
 end)
 
-print("[Phantom] Starting...")
+print("[Phantom] Step 1: Anti-double-load OK")
 
--- ══════════════════════════════════════════════════════════
--- SERVICES (cached once)
--- ══════════════════════════════════════════════════════════
+-- services
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
@@ -32,26 +38,53 @@ local Lighting = game:GetService("Lighting")
 local StarterGui = game:GetService("StarterGui")
 local TeleportService = game:GetService("TeleportService")
 local HttpService = game:GetService("HttpService")
-local CoreGui = game:GetService("CoreGui")
 
--- VirtualInputManager might not exist on all executors
-local VirtualInput
-pcall(function() VirtualInput = game:GetService("VirtualInputManager") end)
+print("[Phantom] Step 2: Core services OK")
 
 local Player = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
 
--- GUI parent — try multiple methods for executor compatibility
-local GuiParent = CoreGui
+-- VirtualInputManager — not all executors have this
+local VirtualInput
+pcall(function() VirtualInput = game:GetService("VirtualInputManager") end)
+if not VirtualInput then
+    print("[Phantom] WARN: VirtualInputManager not available, using mouse1click fallback")
+end
+
+-- GUI parent — executor compat: try gethui > CoreGui > PlayerGui
+local GuiParent
 pcall(function()
-    if syn and syn.protect_gui then
-        -- Synapse X
-    elseif gethui then
+    if type(gethui) == "function" then
         GuiParent = gethui()
+        print("[Phantom] GUI parent: gethui()")
     end
 end)
+if not GuiParent then
+    pcall(function()
+        if type(syn) == "table" and syn.protect_gui then
+            GuiParent = game:GetService("CoreGui")
+            print("[Phantom] GUI parent: CoreGui (syn)")
+        end
+    end)
+end
+if not GuiParent then
+    local ok = pcall(function()
+        -- test if we can parent to CoreGui
+        local test = Instance.new("Folder")
+        test.Parent = game:GetService("CoreGui")
+        test:Destroy()
+        GuiParent = game:GetService("CoreGui")
+    end)
+    if ok and GuiParent then
+        print("[Phantom] GUI parent: CoreGui (direct)")
+    end
+end
+if not GuiParent then
+    GuiParent = Player:WaitForChild("PlayerGui")
+    print("[Phantom] GUI parent: PlayerGui (fallback)")
+end
 
-print("[Phantom] Services loaded")
+print("[Phantom] Step 3: GUI parent resolved")
 
 -- ══════════════════════════════════════════════════════════
 -- ENTITY CACHE — scans once, updates on add/remove
@@ -767,7 +800,13 @@ end
 -- ══════════════════════════════════════════════════════════
 -- GUI — same aesthetics, compact code
 -- ══════════════════════════════════════════════════════════
-pcall(function() CoreGui:FindFirstChild("PhantomEngine"):Destroy() end)
+pcall(function()
+    if GuiParent:FindFirstChild("PhantomEngine") then
+        GuiParent:FindFirstChild("PhantomEngine"):Destroy()
+    end
+end)
+
+print("[Phantom] Step 4: Building GUI...")
 
 local Theme = {
     BG = Color3.fromRGB(15, 15, 25),
