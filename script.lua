@@ -101,9 +101,11 @@ local Cache = {
 
 local function CategorizeObject(obj)
     pcall(function()
-        -- fruits
+        -- dropped fruits only (must have a Handle and NO Humanoid)
         if (obj:IsA("Tool") or obj:IsA("Model")) and obj.Name:find("Fruit") then
-            Cache.Fruits[obj] = true
+            if not obj:FindFirstChildOfClass("Humanoid") and obj:FindFirstChild("Handle") then
+                Cache.Fruits[obj] = true
+            end
             return
         end
         
@@ -445,6 +447,37 @@ function Quest.HasActive()
         end
     end)
     return found
+end
+
+function Quest.GetActiveMob()
+    local mobName = nil
+    pcall(function()
+        local g = Player.PlayerGui:FindFirstChild("Main")
+        if g then
+            -- loop through GUI to find the objective text like "Defeat 0/5 Bandits"
+            for _, desc in ipairs(g:GetDescendants()) do
+                if desc:IsA("TextLabel") and desc.Visible then
+                    local txt = desc.Text:lower()
+                    if txt:find("defeat") or txt:find("kill") then
+                        -- extract the generic string, assume the mob name is in there
+                        mobName = desc.Text
+                        return
+                    end
+                end
+            end
+        end
+    end)
+    return mobName
+end
+
+function Quest.Abandon()
+    local remote = GetRemotes()
+    if remote then
+        pcall(function()
+            remote:InvokeServer("AbandonQuest")
+        end)
+        task.wait(0.5)
+    end
 end
 
 function Quest.IsComplete()
@@ -1365,6 +1398,17 @@ task.spawn(function()
             local qd = Config.SelectedQuest or Quest.GetBest()
             if qd then
                 pcall(function()
+                    if Quest.HasActive() then
+                        -- Check if we are doing the right quest
+                        local activeTxt = Quest.GetActiveMob() or ""
+                        -- If the active quest is NOT for our best mob, abandon it
+                        if not activeTxt:lower():find(qd.Mob:lower()) and Config.AutoQuestAccept then
+                            print("[Farm Debug] Wrong quest active. Abandoning to get: " .. tostring(qd.Quest))
+                            Quest.Abandon()
+                            task.wait(1)
+                        end
+                    end
+                    
                     if not Quest.HasActive() and Config.AutoQuestAccept then
                         print("[Farm Debug] Accepting quest: " .. tostring(qd.Quest))
                         Quest.Accept(qd)
@@ -1378,14 +1422,18 @@ task.spawn(function()
                     if Config.BringMobs and d < Config.BringMobsRange then
                         Combat.BringMob(mob)
                     elseif d > 15 then
+                        -- fly smoothly to mob
                         TweenTo(mob.HumanoidRootPart.CFrame * CFrame.new(0, 0, 3), 300)
                     end
                     if Config.FastAttack then Combat.FastAttack() else Combat.Attack() end
                 else
-                    print("[Farm Debug] No mob nearby, teleporting to spawn...")
+                    print("[Farm Debug] No mob nearby, teleporting to specific spawn coordinates...")
                     local hrp = GetHRP()
-                    if hrp and Dist(hrp, qd.CFrame) > 300 then
-                        TweenTo(qd.CFrame + Vector3.new(0, 50, 0), 350)
+                    if hrp then
+                        if Dist(hrp, qd.CFrame) > 100 then
+                            TweenTo(qd.CFrame + Vector3.new(0, 30, 0), 350)
+                            task.wait(0.1) -- yield to let tween process
+                        end
                     end
                 end
             else
