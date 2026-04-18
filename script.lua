@@ -99,27 +99,8 @@ local Cache = {
     _connections = {},
 }
 
-local function IsMob(obj)
-    return obj:IsA("Model") 
-        and obj:FindFirstChild("Humanoid") 
-        and obj:FindFirstChild("HumanoidRootPart")
-        and not Players:GetPlayerFromCharacter(obj)
-end
-
 local function CategorizeObject(obj)
     pcall(function()
-        -- mobs
-        if IsMob(obj) then
-            Cache.Mobs[obj] = true
-            local hum = obj:FindFirstChild("Humanoid")
-            if hum then
-                hum.Died:Connect(function()
-                    task.delay(2, function() Cache.Mobs[obj] = nil end)
-                end)
-            end
-            return
-        end
-        
         -- fruits
         if (obj:IsA("Tool") or obj:IsA("Model")) and obj.Name:find("Fruit") then
             Cache.Fruits[obj] = true
@@ -151,7 +132,6 @@ end)
 -- Live updates — new objects get categorized automatically
 workspace.DescendantAdded:Connect(CategorizeObject)
 workspace.DescendantRemoving:Connect(function(obj)
-    Cache.Mobs[obj] = nil
     Cache.Fruits[obj] = nil
     Cache.Chests[obj] = nil
     Cache.Flowers[obj] = nil
@@ -513,7 +493,7 @@ function Quest.Accept(data)
 end
 
 -- ══════════════════════════════════════════════════════════
--- COMBAT (uses Cache.Mobs + real weapon attacks)
+-- COMBAT (uses workspace.Enemies + real weapon attacks)
 -- ══════════════════════════════════════════════════════════
 local Combat = {}
 
@@ -522,16 +502,17 @@ function Combat.Nearest(range, filter)
     if not hrp then return nil, math.huge end
     local best, bestD = nil, range or 500
     
-    for mob in pairs(Cache.Mobs) do
-        if mob.Parent and mob:FindFirstChild("HumanoidRootPart") and mob:FindFirstChild("Humanoid") then
+    local enemiesFolder = workspace:FindFirstChild("Enemies")
+    if not enemiesFolder then return nil, math.huge end
+    
+    for _, mob in ipairs(enemiesFolder:GetChildren()) do
+        if mob:IsA("Model") and mob:FindFirstChild("HumanoidRootPart") and mob:FindFirstChild("Humanoid") then
             local hum = mob.Humanoid
             if hum.Health > 0 then
                 if filter and not mob.Name:lower():find(filter:lower()) then continue end
                 local d = Dist(hrp, mob.HumanoidRootPart)
                 if d < bestD then best, bestD = mob, d end
             end
-        else
-            Cache.Mobs[mob] = nil
         end
     end
     return best, bestD
@@ -551,8 +532,12 @@ end
 function Combat.BringAll(range)
     local hrp = GetHRP()
     if not hrp then return end
-    for mob in pairs(Cache.Mobs) do
-        if mob.Parent and mob:FindFirstChild("HumanoidRootPart") and mob:FindFirstChild("Humanoid") then
+    
+    local enemiesFolder = workspace:FindFirstChild("Enemies")
+    if not enemiesFolder then return end
+    
+    for _, mob in ipairs(enemiesFolder:GetChildren()) do
+        if mob:IsA("Model") and mob:FindFirstChild("HumanoidRootPart") and mob:FindFirstChild("Humanoid") then
             if mob.Humanoid.Health > 0 and Dist(hrp, mob.HumanoidRootPart) < (range or 100) then
                 Combat.BringMob(mob)
             end
@@ -787,10 +772,13 @@ function ESP.Refresh()
     end
     
     if Config.ESPBoss then
-        for mob in pairs(Cache.Mobs) do
-            if mob.Parent and mob:FindFirstChild("Humanoid") and mob:FindFirstChild("HumanoidRootPart") then
-                if mob.Humanoid.MaxHealth >= 50000 and mob.Humanoid.Health > 0 then
-                    ESP.Add(mob.HumanoidRootPart, "BOSS: " .. mob.Name, Color3.fromRGB(255, 0, 0))
+        local enemiesFolder = workspace:FindFirstChild("Enemies")
+        if enemiesFolder then
+            for _, mob in ipairs(enemiesFolder:GetChildren()) do
+                if mob:IsA("Model") and mob:FindFirstChild("Humanoid") and mob:FindFirstChild("HumanoidRootPart") then
+                    if mob.Humanoid.MaxHealth >= 50000 and mob.Humanoid.Health > 0 then
+                        ESP.Add(mob.HumanoidRootPart, "BOSS: " .. mob.Name, Color3.fromRGB(255, 0, 0))
+                    end
                 end
             end
         end
@@ -1372,12 +1360,17 @@ task.spawn(function()
         if Config.AutoFarm then
             local qd = Config.SelectedQuest or Quest.GetBest()
             if qd then
-                if not Quest.HasActive() and Config.AutoQuestAccept then
-                    Quest.Accept(qd)
-                    task.wait(1)
-                end
+                pcall(function()
+                    if not Quest.HasActive() and Config.AutoQuestAccept then
+                        print("[Farm Debug] Accepting quest: " .. tostring(qd.Quest))
+                        Quest.Accept(qd)
+                        task.wait(1)
+                    end
+                end)
+                
                 local mob, d = Combat.Nearest(Config.MobAuraRange, qd.Mob)
                 if mob and mob:FindFirstChild("HumanoidRootPart") then
+                    -- disable print if we are just hitting them so we don't spam
                     if Config.BringMobs and d < Config.BringMobsRange then
                         Combat.BringMob(mob)
                     elseif d > 15 then
@@ -1385,11 +1378,14 @@ task.spawn(function()
                     end
                     if Config.FastAttack then Combat.FastAttack() else Combat.Attack() end
                 else
+                    print("[Farm Debug] No mob nearby, teleporting to spawn...")
                     local hrp = GetHRP()
                     if hrp and Dist(hrp, qd.CFrame) > 300 then
-                        TweenTo(qd.CFrame + Vector3.new(0, 20, 0), 350)
+                        TweenTo(qd.CFrame + Vector3.new(0, 50, 0), 350)
                     end
                 end
+            else
+                print("[Farm Debug] No quest data found for your level")
             end
         end
     end
