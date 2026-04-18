@@ -1,23 +1,24 @@
 --[[
-    ██████╗ ██╗      ██████╗ ██╗  ██╗    ███████╗██████╗ ██╗   ██╗██╗████████╗███████╗
-    ██╔══██╗██║     ██╔═══██╗╚██╗██╔╝    ██╔════╝██╔══██╗██║   ██║██║╚══██╔══╝██╔════╝
-    ██████╔╝██║     ██║   ██║ ╚███╔╝     █████╗  ██████╔╝██║   ██║██║   ██║   ███████╗
-    ██╔══██╗██║     ██║   ██║ ██╔██╗     ██╔══╝  ██╔══██╝██║   ██║██║   ██║   ╚════██║
-    ██████╔╝███████╗╚██████╔╝██╔╝ ██╗    ██║     ██║  ██║╚██████╔╝██║   ██║   ███████║
-    ╚═════╝ ╚══════╝ ╚═════╝ ╚═╝  ╚═╝    ╚═╝     ╚═╝  ╚═╝ ╚═════╝ ╚═╝   ╚═╝   ╚══════╝
-    
     PHANTOM ENGINE v4.2 — Blox Fruits Ultimate
     Optimized build — cached scanning, throttled loops
 ]]
 
 -- ══════════════════════════════════════════════════════════
--- ANTI-DOUBLE-LOAD
+-- ANTI-DOUBLE-LOAD (with reset support)
 -- ══════════════════════════════════════════════════════════
-if getgenv and getgenv().PhantomLoaded then
-    warn("[Phantom] Already running")
-    return
-end
-if getgenv then getgenv().PhantomLoaded = true end
+pcall(function()
+    if getgenv and getgenv().PhantomLoaded then
+        -- kill old instance first
+        getgenv().PhantomLoaded = false
+        pcall(function()
+            game:GetService("CoreGui"):FindFirstChild("PhantomEngine"):Destroy()
+        end)
+        task.wait(0.5)
+    end
+    if getgenv then getgenv().PhantomLoaded = true end
+end)
+
+print("[Phantom] Starting...")
 
 -- ══════════════════════════════════════════════════════════
 -- SERVICES (cached once)
@@ -25,7 +26,6 @@ if getgenv then getgenv().PhantomLoaded = true end
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
-local VirtualInput = game:GetService("VirtualInputManager")
 local RunService = game:GetService("RunService")
 local UIS = game:GetService("UserInputService")
 local Lighting = game:GetService("Lighting")
@@ -34,8 +34,24 @@ local TeleportService = game:GetService("TeleportService")
 local HttpService = game:GetService("HttpService")
 local CoreGui = game:GetService("CoreGui")
 
+-- VirtualInputManager might not exist on all executors
+local VirtualInput
+pcall(function() VirtualInput = game:GetService("VirtualInputManager") end)
+
 local Player = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
+
+-- GUI parent — try multiple methods for executor compatibility
+local GuiParent = CoreGui
+pcall(function()
+    if syn and syn.protect_gui then
+        -- Synapse X
+    elseif gethui then
+        GuiParent = gethui()
+    end
+end)
+
+print("[Phantom] Services loaded")
 
 -- ══════════════════════════════════════════════════════════
 -- ENTITY CACHE — scans once, updates on add/remove
@@ -58,46 +74,37 @@ local function IsMob(obj)
 end
 
 local function CategorizeObject(obj)
-    -- mobs
-    if IsMob(obj) then
-        Cache.Mobs[obj] = true
-        obj.Destroying:Once(function() Cache.Mobs[obj] = nil end)
-        -- also listen for humanoid death to remove
-        local hum = obj:FindFirstChild("Humanoid")
-        if hum then
-            hum.Died:Once(function()
-                task.wait(2)
-                Cache.Mobs[obj] = nil
-            end)
+    pcall(function()
+        -- mobs
+        if IsMob(obj) then
+            Cache.Mobs[obj] = true
+            local hum = obj:FindFirstChild("Humanoid")
+            if hum then
+                hum.Died:Connect(function()
+                    task.delay(2, function() Cache.Mobs[obj] = nil end)
+                end)
+            end
+            return
         end
-        return
-    end
-    
-    -- fruits
-    if obj:IsA("Tool") and obj.Name:find("Fruit") then
-        Cache.Fruits[obj] = true
-        obj.Destroying:Once(function() Cache.Fruits[obj] = nil end)
-        return
-    end
-    if obj:IsA("Model") and obj.Name:find("Fruit") then
-        Cache.Fruits[obj] = true
-        obj.Destroying:Once(function() Cache.Fruits[obj] = nil end)
-        return
-    end
-    
-    -- chests
-    if obj:IsA("BasePart") and obj.Name:find("Chest") then
-        Cache.Chests[obj] = true
-        obj.Destroying:Once(function() Cache.Chests[obj] = nil end)
-        return
-    end
-    
-    -- flowers
-    if obj:IsA("BasePart") and (obj.Name:find("Flower") or obj.Name:find("flower")) then
-        Cache.Flowers[obj] = true
-        obj.Destroying:Once(function() Cache.Flowers[obj] = nil end)
-        return
-    end
+        
+        -- fruits
+        if (obj:IsA("Tool") or obj:IsA("Model")) and obj.Name:find("Fruit") then
+            Cache.Fruits[obj] = true
+            return
+        end
+        
+        -- chests
+        if obj:IsA("BasePart") and obj.Name:find("Chest") then
+            Cache.Chests[obj] = true
+            return
+        end
+        
+        -- flowers
+        if obj:IsA("BasePart") and (obj.Name:find("Flower") or obj.Name:find("flower")) then
+            Cache.Flowers[obj] = true
+            return
+        end
+    end)
 end
 
 -- Initial scan (one-time)
@@ -280,10 +287,12 @@ end
 -- ANTI-AFK (lightweight, event-based)
 -- ══════════════════════════════════════════════════════════
 Player.Idled:Connect(function()
-    if not Config.AntiAFK then return end
-    VirtualInput:SendKeyEvent(true, Enum.KeyCode.W, false, game)
-    task.wait(0.1)
-    VirtualInput:SendKeyEvent(false, Enum.KeyCode.W, false, game)
+    if not Config.AntiAFK or not VirtualInput then return end
+    pcall(function()
+        VirtualInput:SendKeyEvent(true, Enum.KeyCode.W, false, game)
+        task.wait(0.1)
+        VirtualInput:SendKeyEvent(false, Enum.KeyCode.W, false, game)
+    end)
 end)
 
 -- ══════════════════════════════════════════════════════════
@@ -375,6 +384,7 @@ function Combat.BringAll(range)
 end
 
 function Combat.Click()
+    if not VirtualInput then return end
     pcall(function()
         VirtualInput:SendMouseButtonEvent(0, 0, 0, true, game, 1)
         task.wait()
@@ -387,6 +397,7 @@ function Combat.FastClick()
 end
 
 function Combat.Skill(key)
+    if not VirtualInput then return end
     pcall(function()
         VirtualInput:SendKeyEvent(true, key, false, game)
         task.wait(0.1)
@@ -482,7 +493,7 @@ function ESP.Add(part, text, color)
     bb.Size = UDim2.new(0, 200, 0, 50)
     bb.StudsOffset = Vector3.new(0, 3, 0)
     bb.AlwaysOnTop = true
-    bb.Parent = CoreGui
+    bb.Parent = GuiParent
     
     local lbl = Instance.new("TextLabel")
     lbl.Size = UDim2.new(1, 0, 1, 0)
@@ -778,7 +789,9 @@ local SG = Instance.new("ScreenGui")
 SG.Name = "PhantomEngine"
 SG.ResetOnSpawn = false
 SG.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-SG.Parent = CoreGui
+pcall(function() if syn and syn.protect_gui then syn.protect_gui(SG) end end)
+SG.Parent = GuiParent
+print("[Phantom] GUI created")
 
 local MF = Instance.new("Frame")
 MF.Size = UDim2.new(0, 620, 0, 460)
