@@ -170,6 +170,8 @@ local Config = {
     BringMobs = true,
     BringMobsRange = 100,
     FastAttack = true,
+    SelectedWeapon = nil, -- name of weapon to equip from backpack
+    AttackSpeed = 0.1,
     
     FruitSniper = false,
     FruitSniperMode = "Any",
@@ -306,14 +308,107 @@ local function Notify(title, text, dur)
 end
 
 local function GetLevel()
-    local d = Player:FindFirstChild("Data") or Player:FindFirstChild("leaderstats")
-    if d then local l = d:FindFirstChild("Level") if l then return l.Value end end
+    -- try multiple Blox Fruits level sources
+    pcall(function()
+        local plrData = Player:FindFirstChild("Data")
+        if plrData then
+            local lvl = plrData:FindFirstChild("Level")
+            if lvl then return lvl.Value end
+        end
+    end)
+    -- fallback: parse from GUI
+    pcall(function()
+        local main = Player.PlayerGui:FindFirstChild("Main")
+        if main then
+            local lvlText = main:FindFirstChild("Level", true)
+            if lvlText and lvlText:IsA("TextLabel") then
+                local num = tonumber(lvlText.Text:match("%d+"))
+                if num then return num end
+            end
+        end
+    end)
     return 1
 end
 
 local function GetRemotes()
     local r = RS:FindFirstChild("Remotes")
     return r and r:FindFirstChild("CommF_")
+end
+
+-- ══════════════════════════════════════════════════════════
+-- WEAPON SYSTEM
+-- ══════════════════════════════════════════════════════════
+local Weapon = {}
+
+function Weapon.GetAll()
+    local weapons = {}
+    local backpack = Player:FindFirstChild("Backpack")
+    local char = Player.Character
+    
+    if backpack then
+        for _, tool in ipairs(backpack:GetChildren()) do
+            if tool:IsA("Tool") then
+                table.insert(weapons, tool.Name)
+            end
+        end
+    end
+    -- also check currently equipped
+    if char then
+        for _, tool in ipairs(char:GetChildren()) do
+            if tool:IsA("Tool") then
+                -- add if not already in list
+                local found = false
+                for _, n in ipairs(weapons) do
+                    if n == tool.Name then found = true break end
+                end
+                if not found then table.insert(weapons, tool.Name) end
+            end
+        end
+    end
+    return weapons
+end
+
+function Weapon.Equip(weaponName)
+    if not weaponName then return false end
+    local char = Player.Character
+    if not char then return false end
+    
+    -- already equipped?
+    if char:FindFirstChild(weaponName) then return true end
+    
+    local backpack = Player:FindFirstChild("Backpack")
+    if backpack then
+        local tool = backpack:FindFirstChild(weaponName)
+        if tool and tool:IsA("Tool") then
+            pcall(function()
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                if hum then hum:EquipTool(tool) end
+            end)
+            task.wait(0.1)
+            return char:FindFirstChild(weaponName) ~= nil
+        end
+    end
+    return false
+end
+
+function Weapon.GetEquipped()
+    local char = Player.Character
+    if char then
+        for _, tool in ipairs(char:GetChildren()) do
+            if tool:IsA("Tool") then return tool end
+        end
+    end
+    return nil
+end
+
+function Weapon.Unequip()
+    pcall(function()
+        local char = Player.Character
+        if char then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then hum:UnequipTools() end
+        end
+    end)
 end
 
 -- ══════════════════════════════════════════════════════════
@@ -329,7 +424,7 @@ Player.Idled:Connect(function()
 end)
 
 -- ══════════════════════════════════════════════════════════
--- QUEST MODULE
+-- QUEST MODULE (Blox Fruits specific)
 -- ══════════════════════════════════════════════════════════
 local Quest = {}
 
@@ -347,21 +442,70 @@ function Quest.GetBest()
 end
 
 function Quest.HasActive()
-    local g = Player.PlayerGui:FindFirstChild("Main")
-    if g then
-        local q = g:FindFirstChild("Quest", true)
-        return q and q.Visible
-    end
-    return false
+    -- method 1: check quest GUI element
+    local found = false
+    pcall(function()
+        local g = Player.PlayerGui:FindFirstChild("Main")
+        if g then
+            local q = g:FindFirstChild("Quest", true)
+            if q and q.Visible then found = true return end
+            -- also check for quest progress text elements
+            for _, desc in ipairs(g:GetDescendants()) do
+                if desc:IsA("TextLabel") and desc.Visible then
+                    local txt = desc.Text:lower()
+                    if txt:find("defeat") or txt:find("kill") or txt:find("collect") or txt:find("/") then
+                        -- looks like a quest objective "Defeat 0/5 Bandits"
+                        if txt:match("%d+/%d+") then
+                            found = true
+                            return
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    return found
+end
+
+function Quest.IsComplete()
+    -- check if quest objective shows X/X (complete)
+    local complete = false
+    pcall(function()
+        local g = Player.PlayerGui:FindFirstChild("Main")
+        if g then
+            for _, desc in ipairs(g:GetDescendants()) do
+                if desc:IsA("TextLabel") and desc.Visible then
+                    local current, total = desc.Text:match("(%d+)/(%d+)")
+                    if current and total and tonumber(current) >= tonumber(total) and tonumber(total) > 0 then
+                        complete = true
+                        return
+                    end
+                end
+            end
+        end
+    end)
+    return complete
 end
 
 function Quest.Accept(data)
     if not data then return false end
+    
+    -- tween to quest NPC area
     TweenWait(data.CFrame + Vector3.new(0, 20, 0), 350)
     task.wait(0.5)
+    
     local remote = GetRemotes()
     if remote then
-        remote:InvokeServer("StartQuest", data.Quest, data.Level)
+        -- try the standard Blox Fruits quest start
+        pcall(function()
+            remote:InvokeServer("StartQuest", data.Quest, data.Level)
+        end)
+        task.wait(0.3)
+        
+        -- also try alternative quest format
+        pcall(function()
+            remote:InvokeServer("StartQuest", data.Quest, 1)
+        end)
         task.wait(0.5)
         return true
     end
@@ -369,7 +513,7 @@ function Quest.Accept(data)
 end
 
 -- ══════════════════════════════════════════════════════════
--- COMBAT (uses Cache.Mobs — no scanning)
+-- COMBAT (uses Cache.Mobs + real weapon attacks)
 -- ══════════════════════════════════════════════════════════
 local Combat = {}
 
@@ -387,7 +531,7 @@ function Combat.Nearest(range, filter)
                 if d < bestD then best, bestD = mob, d end
             end
         else
-            Cache.Mobs[mob] = nil -- cleanup dead refs
+            Cache.Mobs[mob] = nil
         end
     end
     return best, bestD
@@ -397,9 +541,9 @@ function Combat.BringMob(mob, off)
     if not mob or not mob:FindFirstChild("HumanoidRootPart") then return end
     local hrp = GetHRP()
     if not hrp then return end
-    mob.HumanoidRootPart.CFrame = hrp.CFrame * (off or CFrame.new(0, -15, 0))
     pcall(function()
-        mob.HumanoidRootPart.Velocity = Vector3.zero
+        mob.HumanoidRootPart.CFrame = hrp.CFrame * (off or CFrame.new(0, -15, 0))
+        mob.HumanoidRootPart.Velocity = Vector3.new(0, 0, 0)
         mob.HumanoidRootPart.CanCollide = false
     end)
 end
@@ -416,26 +560,69 @@ function Combat.BringAll(range)
     end
 end
 
-function Combat.Click()
-    if not VirtualInput then return end
-    pcall(function()
-        VirtualInput:SendMouseButtonEvent(0, 0, 0, true, game, 1)
-        task.wait()
-        VirtualInput:SendMouseButtonEvent(0, 0, 0, false, game, 1)
-    end)
+-- equip selected weapon and attack with it
+function Combat.EnsureWeapon()
+    if Config.SelectedWeapon then
+        Weapon.Equip(Config.SelectedWeapon)
+    else
+        -- auto-equip first weapon if none selected
+        local equipped = Weapon.GetEquipped()
+        if not equipped then
+            local all = Weapon.GetAll()
+            if #all > 0 then
+                Weapon.Equip(all[1])
+            end
+        end
+    end
 end
 
-function Combat.FastClick()
-    for _ = 1, 5 do Combat.Click() task.wait(0.05) end
+function Combat.Attack()
+    -- method 1: activate equipped tool (works for swords, guns, fighting styles)
+    pcall(function()
+        local tool = Weapon.GetEquipped()
+        if tool then
+            tool:Activate()
+        end
+    end)
+    
+    -- method 2: also send VIM click as backup (some weapons respond to this)
+    if VirtualInput then
+        pcall(function()
+            VirtualInput:SendMouseButtonEvent(0, 0, 0, true, game, 1)
+            task.wait()
+            VirtualInput:SendMouseButtonEvent(0, 0, 0, false, game, 1)
+        end)
+    end
+end
+
+function Combat.FastAttack()
+    Combat.EnsureWeapon()
+    for _ = 1, 5 do
+        Combat.Attack()
+        task.wait(Config.AttackSpeed or 0.1)
+    end
 end
 
 function Combat.Skill(key)
-    if not VirtualInput then return end
-    pcall(function()
-        VirtualInput:SendKeyEvent(true, key, false, game)
-        task.wait(0.1)
-        VirtualInput:SendKeyEvent(false, key, false, game)
-    end)
+    if VirtualInput then
+        pcall(function()
+            VirtualInput:SendKeyEvent(true, key, false, game)
+            task.wait(0.1)
+            VirtualInput:SendKeyEvent(false, key, false, game)
+        end)
+    end
+end
+
+function Combat.UseAllSkills()
+    Combat.Skill(Enum.KeyCode.Z)
+    task.wait(0.15)
+    Combat.Skill(Enum.KeyCode.X)
+    task.wait(0.15)
+    Combat.Skill(Enum.KeyCode.C)
+    task.wait(0.15)
+    Combat.Skill(Enum.KeyCode.V)
+    task.wait(0.15)
+    Combat.Skill(Enum.KeyCode.F)
 end
 
 -- ══════════════════════════════════════════════════════════
@@ -957,7 +1144,7 @@ local function Dropdown(pg, name, opts, default, cb)
     l.Size = UDim2.new(0.5, -5, 0, 30); l.Position = UDim2.new(0, 10, 0, 0)
     l.BackgroundTransparency = 1; l.TextColor3 = Theme.Text; l.Font = Enum.Font.GothamMedium; l.TextSize = 12; l.TextXAlignment = Enum.TextXAlignment.Left
     
-    local sel = Instance.new("TextButton", f); sel.Text = default or opts[1]
+    local sel = Instance.new("TextButton", f); sel.Text = default or (opts and opts[1]) or "None"
     sel.Size = UDim2.new(0.5, -15, 0, 24); sel.Position = UDim2.new(0.5, 5, 0, 3)
     sel.BackgroundColor3 = Theme.Bdr; sel.TextColor3 = Theme.AccG; sel.Font = Enum.Font.GothamMedium; sel.TextSize = 11; sel.BorderSizePixel = 0
     Instance.new("UICorner", sel).CornerRadius = UDim.new(0, 4)
@@ -968,15 +1155,26 @@ local function Dropdown(pg, name, opts, default, cb)
     Instance.new("UIListLayout", oc).SortOrder = Enum.SortOrder.LayoutOrder
     
     local exp = false
-    for _, o in ipairs(opts) do
-        local ob = Instance.new("TextButton", oc); ob.Text = o
-        ob.Size = UDim2.new(1, 0, 0, 22); ob.BackgroundTransparency = 1
-        ob.TextColor3 = Theme.Text; ob.Font = Enum.Font.Gotham; ob.TextSize = 11; ob.ZIndex = 10
-        ob.MouseButton1Click:Connect(function() sel.Text = o; exp = false; oc.Visible = false; f.Size = UDim2.new(1,0,0,30); if cb then cb(o) end end)
-        ob.MouseEnter:Connect(function() ob.TextColor3 = Theme.Accent end)
-        ob.MouseLeave:Connect(function() ob.TextColor3 = Theme.Text end)
+    local obj = {}
+    function obj:Refresh(newOpts)
+        opts = newOpts
+        for _, c in ipairs(oc:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
+        oc.Size = UDim2.new(0.5, -15, 0, #opts * 22)
+        for _, o in ipairs(opts) do
+            local ob = Instance.new("TextButton", oc); ob.Text = o
+            ob.Size = UDim2.new(1, 0, 0, 22); ob.BackgroundTransparency = 1
+            ob.TextColor3 = Theme.Text; ob.Font = Enum.Font.Gotham; ob.TextSize = 11; ob.ZIndex = 10
+            ob.MouseButton1Click:Connect(function() sel.Text = o; exp = false; oc.Visible = false; f.Size = UDim2.new(1,0,0,30); if cb then cb(o) end end)
+            ob.MouseEnter:Connect(function() ob.TextColor3 = Theme.Accent end)
+            ob.MouseLeave:Connect(function() ob.TextColor3 = Theme.Text end)
+        end
+        if #opts > 0 and not table.find(opts, sel.Text) then sel.Text = opts[1] end
+        if exp then f.Size = UDim2.new(1,0,0,30 + #opts*22 + 5) end
     end
+    
+    obj:Refresh(opts)
     sel.MouseButton1Click:Connect(function() exp = not exp; oc.Visible = exp; f.Size = exp and UDim2.new(1,0,0,30+#opts*22+5) or UDim2.new(1,0,0,30) end)
+    return obj
 end
 
 local function Button(pg, name, cb)
@@ -1039,6 +1237,9 @@ Toggle(farm, "Auto Farm", false, function(v) Config.AutoFarm = v; SL.Text = v an
 Dropdown(farm, "Farm Mode", {"Quest","Raid","BossOnly"}, "Quest", function(v) Config.AutoFarmMode = v end)
 Toggle(farm, "Auto Quest Accept", true, function(v) Config.AutoQuestAccept = v end)
 Section(farm, "Combat")
+local wepList = Weapon.GetAll()
+local wepDrop = Dropdown(farm, "Select Weapon", wepList, wepList[1], function(v) Config.SelectedWeapon = v end)
+Button(farm, "Refresh Weapons", function() wepDrop:Refresh(Weapon.GetAll()) end)
 Toggle(farm, "Mob Aura", false, function(v) Config.MobAura = v end)
 Toggle(farm, "Bring Mobs", true, function(v) Config.BringMobs = v end)
 Toggle(farm, "Fast Attack", true, function(v) Config.FastAttack = v end)
@@ -1182,7 +1383,7 @@ task.spawn(function()
                     elseif d > 15 then
                         TweenTo(mob.HumanoidRootPart.CFrame * CFrame.new(0, 0, 3), 300)
                     end
-                    if Config.FastAttack then Combat.FastClick() else Combat.Click() end
+                    if Config.FastAttack then Combat.FastAttack() else Combat.Attack() end
                 else
                     local hrp = GetHRP()
                     if hrp and Dist(hrp, qd.CFrame) > 300 then
@@ -1202,7 +1403,7 @@ task.spawn(function()
             if Config.BringMobs then Combat.BringAll(Config.BringMobsRange) end
             local mob = Combat.Nearest(Config.KillAura and Config.KillAuraRange or Config.MobAuraRange)
             if mob then
-                if Config.FastAttack then Combat.FastClick() else Combat.Click() end
+                if Config.FastAttack then Combat.FastAttack() else Combat.Attack() end
             end
         end
     end
