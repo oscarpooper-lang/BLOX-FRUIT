@@ -1,7 +1,7 @@
 -- Phantom Engine v4.2 — Loader
 -- Execute this in your executor to load the script
 
-local SCRIPT_URL = "https://raw.githubusercontent.com/oscarpooper-lang/BLOX-FRUIT/main/script.lua"
+local SCRIPT_URL = "https://raw.githubusercontent.com/oscarpooper-lang/BLOX-FRUIT/main/script.lua?t=" .. tostring(os.time())
 
 -- anti-double-load handled inside script now, no need here
 
@@ -11,7 +11,7 @@ local code = nil
 
 -- try fetching
 local ok1, err1 = pcall(function()
-    code = game:HttpGet(SCRIPT_URL, true)
+    code = game:HttpGet(SCRIPT_URL)
 end)
 
 if not ok1 or not code then
