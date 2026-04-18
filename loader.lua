@@ -1,38 +1,41 @@
---[[
-    ⚡ Phantom Engine v4.2 — Loader
-    
-    HOW TO USE:
-    1. Upload "script.lua" to one of these:
-       • GitHub   → create repo, upload script.lua, get the RAW url
-       • Pastebin → paste the code, get raw url (https://pastebin.com/raw/XXXXXX)
-       
-    2. Replace the URL below with your raw URL
-    
-    3. Give this loader to people. They paste this one-liner in their executor:
-       loadstring(game:HttpGet("YOUR_RAW_LOADER_URL"))()
-]]
+-- Phantom Engine v4.2 — Loader
+-- Execute this in your executor to load the script
 
--- ═══════════════════════════════════════
--- CHANGE THIS TO YOUR RAW SCRIPT URL
--- ═══════════════════════════════════════
-local SCRIPT_URL = "https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/script.lua"
+local SCRIPT_URL = "https://raw.githubusercontent.com/oscarpooper-lang/BLOX-FRUIT/main/script.lua"
 
--- anti-double-load
-if getgenv and getgenv().PhantomLoaded then
-    warn("[Phantom Engine] Already loaded, skipping.")
-    return
-end
-if getgenv then getgenv().PhantomLoaded = true end
+-- anti-double-load handled inside script now, no need here
 
--- load with error handling
-local success, err = pcall(function()
-    loadstring(game:HttpGet(SCRIPT_URL, true))()
+print("[Phantom Engine] Fetching script...")
+
+local code = nil
+
+-- try fetching
+local ok1, err1 = pcall(function()
+    code = game:HttpGet(SCRIPT_URL, true)
 end)
 
-if not success then
-    warn("[Phantom Engine] Failed to load: " .. tostring(err))
-    -- fallback: try without cache
-    pcall(function()
-        loadstring(game:HttpGet(SCRIPT_URL))()
+if not ok1 or not code then
+    warn("[Phantom Engine] Failed to fetch: " .. tostring(err1))
+    -- retry without cache
+    local ok2, err2 = pcall(function()
+        code = game:HttpGet(SCRIPT_URL)
     end)
+    if not ok2 or not code then
+        warn("[Phantom Engine] Retry failed: " .. tostring(err2))
+        return
+    end
+end
+
+print("[Phantom Engine] Script fetched (" .. #code .. " bytes), executing...")
+
+-- execute with visible error
+local fn, compileErr = loadstring(code)
+if not fn then
+    warn("[Phantom Engine] Compile error: " .. tostring(compileErr))
+    return
+end
+
+local ok3, runErr = pcall(fn)
+if not ok3 then
+    warn("[Phantom Engine] Runtime error: " .. tostring(runErr))
 end
